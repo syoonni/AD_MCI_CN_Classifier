@@ -8,8 +8,8 @@ class Dataprocessor:
     @staticmethod
     def extract_limit(data, low=0.005, high=0.995):
         """Extract the lower and upper bounds for data clipping"""
-        lower_bound = np.quantile(data, axis=1, q=low, method='nearest')
-        upper_bound = np.quantile(data, axis=1, q=high, method='nearest')
+        lower_bound = np.quantile(data, axis=1, q=low, method='nearest', keepdims=True)
+        upper_bound = np.quantile(data, axis=1, q=high, method='nearest', keepdims=True)
         return lower_bound, upper_bound
     
     def extract_label(S, X, Y, labels=['CN', 'AD'], sex = 'A'): # 두번째 꺼(extract_label2)
@@ -17,19 +17,26 @@ class Dataprocessor:
         X2 = []
         Y2 = []
 
-        for i in range(len(Y)):
-            if Y[i] in labels:
-                # Process sex information
-                if sex == 'A' or S[i] == sex:
-                    if X[i, 0] == 'M':
-                        X2.append([0] + list(X[i,1:]))
-                    elif X[i, 0] == 'F':
-                        X2.append([1] + list(X[i,1:]))
-
-                # Convert Labels to binary
-                Y2.append(1 if labels.index(Y[i]) == 1 else 0)
+        if sex == 'A': # use all sex data
+            for i in range(len(Y)):
+                if Y[i] in labels:
+                    X2.append(X[i]) 
+                    # Convert Labels to binary
+                    if labels.index(Y[i]) == 0:
+                        Y2.append(0)
+                    else:
+                        Y2.append(1)
+        else: # use only the specified
+            for i in range(len(Y)):
+                if S[i] == sex:
+                    X2.append(X[i])
+                    # Convert Labels to binary
+                    if labels.index(Y[i]) == 0:
+                        Y2.append(0)
+                    else:
+                        Y2.append(1)
             
-        # Convert to numpy arrays and normalize
+        # Convert to numpy arrays
         X2 = np.array(X2).astype(float)
         Y2 = np.array(Y2)
 
@@ -38,15 +45,10 @@ class Dataprocessor:
         print(f"{labels[1]}: {sum(Y2)}")
         print(f"{labels[0]}: {len(Y2) - sum(Y2)}")
 
-        # Standardize features
-        mean =  np.mean(X2[:,1:])
-        std = np.std(X2[:,1:])
-        X2[:,1:] = (X2[:,1:] - mean) / std
-
-        return X2, Y2, mean, std
+        return X2, Y2
     
     @staticmethod
-    def gaussian(self, X): # train data에 대한 gaussian normalization
+    def gaussian(X): # train data에 대한 gaussian normalization
         """Gaussian normalization with outlier clipping"""
         X = X.T
         Zmin, Zmax = Dataprocessor.extract_limit(X)

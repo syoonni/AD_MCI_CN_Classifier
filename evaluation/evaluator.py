@@ -28,7 +28,7 @@ class Evaluator:
     def evaluate(self, test_loader, model_path = 'Object_best.pt'):
         """Evaluate the model on the data"""
         # Load model state
-        state_dict = torch.load(model_path, map_location=self.device)
+        state_dict = torch.load(model_path, map_location=self.device, weights_only=True)
         self.model.load_state_dict(state_dict['State_dict'])  # 키 이름 변경
         self.model.eval()
 
@@ -38,7 +38,8 @@ class Evaluator:
         with torch.no_grad():
             for data, target in test_loader:
                 data = data.to(self.device)
-                target = target.to(self.device)
+
+                target = target.to(self.device, dtype=torch.int64)
 
                 output = self.model(data)
                 output = torch.softmax(output, dim=1)
@@ -47,8 +48,8 @@ class Evaluator:
                 all_targets.append(target)
 
         # Concatenate all batches
-        predictions = torch.cat(predictions, dim=0)
-        targets = torch.cat(targets, dim=0)
+        predictions = torch.cat(all_predictions, dim=0)
+        targets = torch.cat(all_targets, dim=0)
 
         results = self.calculate_and_save_metrics(predictions, targets)
         
@@ -57,6 +58,8 @@ class Evaluator:
     def calculate_and_save_metrics(self, predictions, targets):
         """Calculate metrics and save results"""
         results = {}
+
+        targets = targets.long()
         
         # Calculate all metrics
         for name, metric in self.metrics.items():
@@ -149,3 +152,30 @@ class CombinedModelEvaluator(Evaluator):
             return combined
         else:
             raise ValueError(f"Unknown combine method: {self.combine_method}")
+        
+    def evaluate(self, test_loader, model_paths=None):
+        """Evaluate combined models
+        
+        Args:
+            test_loader: DataLoader for test data
+            model_paths: Dictionary containing paths for both models
+                        {'model1': path_to_model1, 'model2': path_to_model2}
+        """
+        # Load model weights if paths provided
+        if model_paths:
+            state_dict1 = torch.load(model_paths['model1'], map_location=self.device, weights_only=True)
+            state_dict2 = torch.load(model_paths['model2'], map_location=self.device, weights_only=True)
+            self.model1.load_state_dict(state_dict1['State_dict'])
+            self.model2.load_state_dict(state_dict2['State_dict'])
+
+        # Set models to evaluation mode
+        self.model1.eval()
+        self.model2.eval()
+
+        # Get predictions using existing method
+        predictions, targets = self._get_predictions(test_loader)
+
+        # Calculate and save metrics
+        results = self.calculate_and_save_metrics(predictions, targets)
+        
+        return results

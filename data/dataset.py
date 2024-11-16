@@ -3,7 +3,7 @@ import torch
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
-from dataset import Dataprocessor
+from data.data_processor import Dataprocessor
 from torch.utils.data import DataLoader
 
 class TensorData(Dataset):
