@@ -1,32 +1,36 @@
+import os
 import torch
 import pandas as pd
 import numpy as np
 import torchmetrics
-from sklearn.metrics import confusion_matrix, roc_curve, auc
 from torcheval.metrics.functional import multiclass_f1_score
+from sklearn.metrics import confusion_matrix, precision_score, recall_score, accuracy_score, f1_score, roc_auc_score
 import matplotlib.pyplot as plt
 import seaborn as sns
+from collections import Counter
 
 class Evaluator:
     """Class for model evaluation"""
-    def __init__(self, model, device):
+    def __init__(self, model, device, model_name):
         self.model = model
         self.device = device
+        self.model_name = model_name
         self.metrics = self._initialize_metrics()
 
     def _initialize_metrics(self):
         """Initialize evaluation metrics"""
         return {
             'accuracy': torchmetrics.Accuracy(task='multiclass', num_classes=2).to(self.device),
-            'precision': torchmetrics.Precision(task='multiclass', num_classes=2).to(self.device),
-            'recall': torchmetrics.Recall(task='multiclass', num_classes=2).to(self.device),
-            'specificity': torchmetrics.Specificity(task='multiclass', num_classes=2).to(self.device),
-            'f1': torchmetrics.F1Score(task='multiclass', num_classes=2).to(self.device),
+            'precision': torchmetrics.Precision(task='multiclass', num_classes=2, average='weighted').to(self.device),
+            'recall': torchmetrics.Recall(task='multiclass', num_classes=2, average='weighted').to(self.device),
+            'specificity': torchmetrics.Specificity(task='binary', num_classes=2, average='weighted').to(self.device),
+            'f1': torchmetrics.F1Score(task='multiclass', num_classes=2, average='weighted').to(self.device),
             'auroc': torchmetrics.AUROC(task='multiclass', num_classes=2).to(self.device)
         }
     
-    def evaluate(self, test_loader, model_path = 'Object_best.pt'):
+    def evaluate(self, test_loader, model_path, output_dir):
         """Evaluate the model on the data"""
+
         # Load model state
         state_dict = torch.load(model_path, map_location=self.device, weights_only=True)
         self.model.load_state_dict(state_dict['State_dict'])  # 키 이름 변경
@@ -38,7 +42,6 @@ class Evaluator:
         with torch.no_grad():
             for data, target in test_loader:
                 data = data.to(self.device)
-
                 target = target.to(self.device, dtype=torch.int64)
 
                 output = self.model(data)
@@ -51,35 +54,46 @@ class Evaluator:
         predictions = torch.cat(all_predictions, dim=0)
         targets = torch.cat(all_targets, dim=0)
 
-        results = self.calculate_and_save_metrics(predictions, targets)
+        # Calculate and save metrics
+        results = self.calculate_and_save_metrics(predictions, targets, self.model_name, output_dir)
         
         return results
     
-    def calculate_and_save_metrics(self, predictions, targets):
+    def calculate_and_save_metrics(self, predictions, targets, model_name, output_dir):
         """Calculate metrics and save results"""
         results = {}
 
         targets = targets.long()
+        predictions_class = torch.argmax(predictions, dim=1)
         
-        # Calculate all metrics
+        # Calculate metrics using raw probabilities for AUROC and class predictions for others
         for name, metric in self.metrics.items():
-            results[name] = metric(predictions, targets).item()
+            if name == 'auroc':
+                metric.update(predictions, targets)
+            elif name == 'recall':
+                cm = confusion_matrix(targets.cpu().numpy(), predictions_class.cpu().numpy())
+                tn, fp, fn, tp = cm.ravel()
+                manual_recall = tp / (tp + fn)
+                results[name] = manual_recall  # Recall 계산 결과를 사용
+            else:
+                metric.update(predictions_class, targets)
+                results[name] = metric.compute().item()
 
         # Save confusion matrix
-        predictions_class = torch.argmax(predictions, dim=1)
         cm = confusion_matrix(
             targets.cpu().numpy(), 
             predictions_class.cpu().numpy(), 
             normalize='true'
         )
+        tn, fp, fn, tp = cm.ravel()
         
         # Plot and save confusion matrix
         plt.figure(figsize=(10, 7))
         sns.heatmap(cm, annot=True, cmap='Blues', fmt='.2f')
         plt.xlabel('Predicted')
         plt.ylabel('True')
-        plt.title('Confusion Matrix')
-        plt.savefig('Confusion_matrix.png', dpi=300)
+        plt.title(f'Confusion Matrix - {model_name}')
+        plt.savefig(os.path.join(output_dir, f'confusion_matrix_{model_name}.png'), dpi=300)
         plt.close()
 
         # Save detailed predictions
@@ -89,34 +103,36 @@ class Evaluator:
             'Prob_Class_0': predictions[:, 0].cpu().numpy(),
             'Prob_Class_1': predictions[:, 1].cpu().numpy()
         })
-        df.to_csv('predictions.csv', index=False)
-        
+        df.to_csv(os.path.join(output_dir, f'predictions_{model_name}.csv'), index=False)
+
+        recall_value = self.metrics['recall'].compute().item()
+        print(f"Updated Recall: {recall_value}")
+
+        # Manual Recall 계산 결과
+        manual_recall = tp / (tp + fn)
+        print(f"Manual Recall: {manual_recall}")
+
         return results
+    
 
 class CombinedModelEvaluator(Evaluator):
     """Class for evaluating combined models"""
     def __init__(self, model1, model2, device, combine_method='threshold'):
-        super().__init__(None, device)
+        super().__init__(None, device, model_name='combined')
         self.model1 = model1
         self.model2 = model2
         self.combine_method = combine_method
 
-    def _get_predictions(self, dataloader):
+    def _get_predictions(self, testloader1, testloader2):
         """Get predictions from combined models"""
         predictions = []
         targets = []
 
         with torch.no_grad():
-            for data, target in dataloader:
-                data, target = data.to(self.device), target.to(self.device)
-
-                # Validate data size
-                if data.shape[1] < (self.model1.fc1.in_features + self.model2.fc1.in_features):
-                    raise ValueError("Input data does not have enough features for both models.")
-
-                # Split data for each model
-                data1 = data[:, :self.model1.fc1.in_features]
-                data2 = data[:, -self.model2.fc1.in_features:]
+            for (data1, target1), (data2, target2) in zip(testloader1, testloader2):
+                data1 = data1.to(self.device)
+                data2 = data2.to(self.device)
+                target1 = target1.to(self.device, dtype=torch.int64)
 
                 # Get predictions from both models
                 output1 = self.model1(data1)
@@ -130,7 +146,7 @@ class CombinedModelEvaluator(Evaluator):
                 combined_output = self._combine_predictions(output1, output2)
 
                 predictions.append(combined_output)
-                targets.append(target)
+                targets.append(target1)           
 
             predictions = torch.cat(predictions, dim=0)
             targets = torch.cat(targets, dim=0)
@@ -143,7 +159,7 @@ class CombinedModelEvaluator(Evaluator):
             return (pred1 + pred2) / 2
     
         elif self.combine_method == 'weighted':
-            return 0.2 * pred1 + 0.8 * pred2
+            return 0.7 * pred1 + 0.3 * pred2
         elif self.combine_method == 'threshold':
             combined = torch.zeros_like(pred1)
             mask = torch.nn.Softmax(dim=1)(pred1)[:, 1] > 0.5
@@ -153,7 +169,7 @@ class CombinedModelEvaluator(Evaluator):
         else:
             raise ValueError(f"Unknown combine method: {self.combine_method}")
         
-    def evaluate(self, test_loader, model_paths=None):
+    def evaluate(self, test_loader1, testloader2, model_paths, output_dir):
         """Evaluate combined models
         
         Args:
@@ -173,9 +189,9 @@ class CombinedModelEvaluator(Evaluator):
         self.model2.eval()
 
         # Get predictions using existing method
-        predictions, targets = self._get_predictions(test_loader)
+        predictions, targets = self._get_predictions(test_loader1, testloader2)
 
         # Calculate and save metrics
-        results = self.calculate_and_save_metrics(predictions, targets)
+        results = self.calculate_and_save_metrics(predictions, targets, 'combined', output_dir)
         
         return results

@@ -1,0 +1,24 @@
+
+First Model Results:
+accuracy: 0.7316
+precision: 0.7309
+recall: 0.8032
+specificity: 0.6424
+f1: 0.7294
+--------------------------------------------------
+
+Second Model Results:
+accuracy: 0.6608
+precision: 0.6595
+recall: 0.7819
+specificity: 0.5099
+f1: 0.6536
+--------------------------------------------------
+
+Combined Model Results:
+accuracy: 0.7434
+precision: 0.7446
+recall: 0.8351
+specificity: 0.6291
+f1: 0.7398
+--------------------------------------------------

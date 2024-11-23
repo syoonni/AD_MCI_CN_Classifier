@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -53,7 +54,7 @@ class Trainer:
 
         return running_loss / len(val_loader)
     
-    def train(self, train_loader, val_loader, num_epochs, best_model_save_path, final_model_save_path):
+    def train(self, train_loader, val_loader, num_epochs, best_model_save_path, final_model_save_path, output_dir):
         """Train the model"""
         train_losses = []
         val_losses = []
@@ -96,5 +97,5 @@ class Trainer:
             plt.xlabel('Epoch')
             plt.ylabel('Loss')
             plt.legend()
-            plt.savefig('Loss.png', dpi=300)
+            plt.savefig(os.path.join(output_dir, 'Loss.png'), dpi=300)
             plt.close()

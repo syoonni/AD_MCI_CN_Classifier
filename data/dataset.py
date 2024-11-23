@@ -22,7 +22,7 @@ class TensorData(Dataset):
 class AlzheimerDataset:
     """Class for handling Alzheimer's dataset loading and preprocessing"""
 
-    def __init__(self, data_path, interesting_features, labels=['CN', 'AD'], sex='A', test = False, mean = None, std = None):
+    def __init__(self, data_path, interesting_features, labels=['CN', 'AD'], sex='A', test = False, mean = None, std = None, common_ids = None):
         """Initialize dataset with configuration"""
         self.data_path = data_path
         self.interesting_features = interesting_features
@@ -31,6 +31,7 @@ class AlzheimerDataset:
         self.test = test
         self.mean = mean
         self.std = std
+        self.common_ids = common_ids
 
         self.load_and_split_data()
         
@@ -38,6 +39,9 @@ class AlzheimerDataset:
         """Load data and split into train, validation and test sets"""
         # Load data
         df = pd.read_csv(self.data_path)
+
+        if self.common_ids is not None:
+            df = df[df['id'].isin(self.common_ids)]
         
         # Extract relevant columns
         S = df['Sex'].values
@@ -79,6 +83,7 @@ class AlzheimerDataset:
         
         dataloaders = {}
         for split_name, (X, Y) in data_splits.items():
+
             dataset = TensorData(X, Y)
             shuffle = split_name == 'train'  # Only shuffle training data
             dataloaders[split_name] = DataLoader(

@@ -2,6 +2,7 @@ import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import pandas as pd
 
 from data.dataset import AlzheimerDataset
 from network.regressor import Regressor
@@ -32,26 +33,46 @@ def set_model(in_dim, device, lr=0.001):
     
     return model, criterion, optimizer, scheduler
 
+
 def main():
     # Setup
     device = set_device()
     
-    # Configuration
-    labels = ['CN', 'AD']
+    ################## Configuration ##################
+    labels = ['AD', 'CN']
     sex = 'A'
+    num_epochs = 500
 
-    model_dir = 'models/'
-    if not os.path.exists(model_dir):
-        os.makedirs(model_dir)
+    # Create directories for models and results
+    model_dir = 'models/models1/'
+    results_dir = 'results/results1/'
 
-    # First model (manual features)
+    data_path1 = 'AlzheimerDataset/fast_data + manual.csv'
+    data_path2 = 'AlzheimerDataset/fast_data + manual.csv'
+
+    # First model (manual features + Fast features)
     interesting_features1 = ['manu_37', '13', '14', '29', '28', '40', 'Sum']
-    class1 = len(interesting_features1)
+
+    # Second model (Fast features)
+    interesting_features2 = ['13', '14', '29', '28', '40', '46', '47', '38', '71', '39', '21', '3', '27']
+
+    ###################################################
+
+    # Create directories if they don't exist
+    for directory in [model_dir, results_dir]:
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+
+    df_data1 = pd.read_csv(data_path1)
+    df_data2 = pd.read_csv(data_path2)
+    common_ids = set(df_data1['id']).intersection(set(df_data2['id']))
+
     dataset1 = AlzheimerDataset(
-        data_path='AlzheimerDataset/fast_data + manual.csv',
+        data_path=data_path1,
         interesting_features=interesting_features1,
         labels=labels,
-        sex=sex
+        sex=sex,
+        common_ids=common_ids
     )
 
     dataloaders1 = dataset1.data_loaders()
@@ -74,27 +95,27 @@ def main():
     trainer1.train(
         train_loader=dataloaders1['train'],
         val_loader=dataloaders1['val'],
-        num_epochs=10,
-        best_model_save_path=os.path.join(model_dir, 'Object_best0.pt'),
-        final_model_save_path=os.path.join(model_dir, 'Object_last0.pt')
+        num_epochs=num_epochs,
+        best_model_save_path=os.path.join(model_dir, 'Object_best1.pt'),
+        final_model_save_path=os.path.join(model_dir, 'Object_last1.pt'),
+        output_dir=results_dir
     )
 
-    # Evaluate first model
-    evaluator1 = Evaluator(model1, device)
-    results1 = evaluator1.evaluate(dataloaders1['test'], model_path=os.path.join(model_dir, 'Object_last0.pt'))
-    print("\nFirst Model Results:")
-    for metric_name, value in results1.items():
-        print(f"{metric_name}: {value:.4f}")
+    # First model evaluation
+    evaluator1 = Evaluator(model1, device, "model1")
+    results1 = evaluator1.evaluate(
+        dataloaders1['test'],
+        model_path=os.path.join(model_dir, 'Object_best1.pt'),
+        output_dir=results_dir
+    )
 
-    # Second model (Fast features)
-    interesting_features2 = ['13', '14', '29', '28', '40', '46', '47', '38', '71', '39', '21', '3', '27']
-    class2 = len(interesting_features2)
 
     dataset2 = AlzheimerDataset(
-        data_path='AlzheimerDataset/fast_data + manual.csv',
+        data_path=data_path2,
         interesting_features=interesting_features2,
         labels=labels,
-        sex=sex
+        sex=sex,
+        common_ids=common_ids
     )
     dataloaders2 = dataset2.data_loaders()
 
@@ -116,41 +137,48 @@ def main():
     trainer2.train(
         train_loader=dataloaders2['train'],
         val_loader=dataloaders2['val'],
-        num_epochs=10,
-        best_model_save_path=os.path.join(model_dir, 'Object_best1.pt'),
-        final_model_save_path=os.path.join(model_dir, 'Object_last1.pt')
+        num_epochs=num_epochs,
+        best_model_save_path=os.path.join(model_dir, 'Object_best2.pt'),
+        final_model_save_path=os.path.join(model_dir, 'Object_last2.pt'),
+        output_dir=results_dir
     )
 
-    # Evaluate second model
-    evaluator2 = Evaluator(model2, device)
-    results2 = evaluator2.evaluate(dataloaders2['test'], model_path=os.path.join(model_dir, 'Object_last1.pt'))
-    print("\nSecond Model Results:")
-    for metric_name, value in results2.items():
-        print(f"{metric_name}: {value:.4f}")
-
-    ###### Combined Model ######
-    interesting_combined_features = interesting_features1 + interesting_features2
-
-    dataset_combined = AlzheimerDataset(
-        data_path='AlzheimerDataset/fast_data + manual.csv',
-        interesting_features=interesting_combined_features,
-        labels=labels,
-        sex=sex
+    # Second model evaluation
+    evaluator2 = Evaluator(model2, device, "model2")
+    results2 = evaluator2.evaluate(
+        dataloaders2['test'],
+        model_path=os.path.join(model_dir, 'Object_best2.pt'),
+        output_dir=results_dir
     )
-    dataloaders_combined = dataset_combined.data_loaders()
+
+    ####################### Combined Model ###########################
 
     # Evaluate combined model
     combined_evaluator = CombinedModelEvaluator(model1, model2, device, combine_method='average')
     results_combined = combined_evaluator.evaluate(
-        dataloaders_combined['test'],
+        dataloaders1['test'],
+        dataloaders2['test'],
         model_paths={  
-            'model1': os.path.join(model_dir, 'Object_last0.pt'),
-            'model2': os.path.join(model_dir, 'Object_last1.pt')
-        }
+            'model1': os.path.join(model_dir, 'Object_best1.pt'),
+            'model2': os.path.join(model_dir, 'Object_best2.pt')
+        },
+        output_dir=results_dir
     )
-    print("\nCombined Model Results:")
-    for metric_name, value in results_combined.items():
-        print(f"{metric_name}: {value:.4f}")
+
+    with open(os.path.join(results_dir, 'evaluation_results.txt'), 'w') as f:
+        for model_name, results in [
+            ("First Model", results1),
+            ("Second Model", results2),
+            ("Combined Model", results_combined)
+        ]:
+            # Print and save results
+            print(f"\n{model_name} Results:")
+            f.write(f"\n{model_name} Results:\n")
+
+            for metric_name, value in results.items():
+                print(f"{metric_name}: {value:.4f}")
+                f.write(f"{metric_name}: {value:.4f}\n")
+            f.write("-" * 50 + "\n")
 
 if __name__ == "__main__":
     main()
